@@ -362,3 +362,10 @@ grant execute on function public.is_admin() to authenticated;
 revoke execute on function public.asset_action(uuid,text,date,text,text,text,text,text,numeric,text) from anon, public;
 revoke execute on function public.import_assets(jsonb) from anon, public;
 revoke execute on function public.import_assets_wrapper(jsonb) from anon, public;
+
+-- hardening (Supabase security advisor)
+alter function public.current_email() set search_path = public;
+alter function public.touch_updated_at() set search_path = public;
+revoke execute on function public.log_asset_change() from public, anon, authenticated;
+revoke execute on function public.is_admin() from public, anon;
+grant execute on function public.is_admin() to authenticated;
