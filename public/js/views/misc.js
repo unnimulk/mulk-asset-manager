@@ -205,6 +205,31 @@ export async function labelsView(main) {
   render();
 }
 
+export async function changePasswordDialog() {
+  const email = store.db.session?.user?.email || '';
+  const ok = await modal({
+    title: 'Change password',
+    submit: 'Save password',
+    body: `
+      <p class="muted" style="margin:0">Signed in as ${esc(email)}</p>
+      <label class="f">Current password<input name="current" type="password" autocomplete="current-password" required></label>
+      <label class="f">New password<input name="p1" type="password" minlength="8" autocomplete="new-password" required></label>
+      <label class="f">Repeat new password<input name="p2" type="password" minlength="8" autocomplete="new-password" required></label>`,
+    onSubmit: async (form) => {
+      const current = form.current.value;
+      const next = form.p1.value;
+      if (next.length < 8) throw new Error('Use at least 8 characters.');
+      if (next !== form.p2.value) throw new Error('The new passwords do not match.');
+      if (next === current) throw new Error('Choose a different password from the current one.');
+      if (!email) throw new Error('Sign in again, then change the password.');
+      try { await store.db.signIn(email, current); }
+      catch (e) { throw new Error(e.status === 400 ? 'The current password is wrong.' : e.message); }
+      await store.db.updatePassword(next);
+    },
+  });
+  if (ok) toast('Password changed');
+}
+
 // ---------------- Admins ----------------
 export async function settingsView(main) {
   const admins = await store.db.select('app_admins', { select: '*', order: 'email.asc' });
@@ -212,6 +237,12 @@ export async function settingsView(main) {
   main.innerHTML = `
     <div class="page-head"><div><h1>Admins</h1><p>People allowed to use this app.</p></div>
       <button class="btn primary" id="add">${icon('plus')} Add admin</button></div>
+    <div class="card" style="margin-bottom:18px"><div class="card-h"><h2>Your password</h2></div>
+      <div class="card-b row">
+        <span class="muted">Signed in as ${esc(me || 'this account')}</span>
+        <button class="btn" id="changepw">${icon('edit')} Change password</button>
+      </div>
+    </div>
     <div class="grid-3">
       <div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>E-mail</th><th>Added</th><th></th></tr></thead><tbody>
         ${admins.map(a => `<tr><td>${esc(a.email)}${a.email.toLowerCase() === me ? ' <span class="muted">(you)</span>' : ''}</td><td class="sub">${fmtDate(a.added_at)}</td>
@@ -224,6 +255,7 @@ export async function settingsView(main) {
         <div class="muted">Removing someone here blocks them immediately, even if their login still exists in Supabase.</div>
       </div></div>
     </div>`;
+  $('#changepw').onclick = () => changePasswordDialog();
   $('#add').onclick = async () => {
     const ok = await modal({
       title: 'Add admin', submit: 'Add',

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mulk Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono&display=swap" rel="stylesheet">
+  <style>
+    :root { color-scheme: light; --ink: #141820; --muted: #5c6570; --line: #e2e5ea; --accent: #0e5e56; --bg: #f4f5f7; --panel: #fff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px/1.5 "IBM Plex Sans", sans-serif; background: var(--bg); color: var(--ink); }
+    main { max-width: 720px; margin: 0 auto; padding: 40px 20px 64px; }
+    h1 { font-size: 32px; margin: 0 0 8px; }
+    h2 { font-size: 18px; margin: 28px 0 8px; }
+    p, li { color: var(--ink); }
+    .muted { color: var(--muted); }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin-top: 16px; }
+    code, pre { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; }
+    pre { white-space: pre-wrap; background: #f4f5f7; border-radius: 8px; padding: 12px; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Mulk Agent</h1>
+    <p class="muted">The company program for a Windows laptop or desktop. It is a separate install from the asset register. Intune is not required.</p>
+    <div class="card">
+      <p>The window stays on the computer with the name Mulk Agent. The person can read the rules. They can ask for admin rights. IT approves or denies that request in Control. A short approval adds that Windows account to Administrators and removes it when the time ends. USB storage follows the rule set.</p>
+      <p>Every few minutes the program sends the installed software list: program name, version, and publisher from the Windows uninstall list. The first list is the baseline. A program that appears later is an alert on the Alerts page. It also sends health: BitLocker, Microsoft Defender, the firewall, free disk space, whether a restart is waiting, the manufacturer, model, serial, memory, the names of local administrators, and the names of startup programs. It does not read the files those programs open.</p>
+      <p>It also sends the public IP address and the city and country that IP belongs to. A country other than the UAE is an alert. It does not use GPS. USB devices already connected at the first check are the baseline. A USB device plugged in after that is an alert, by device name only. Files on the drive are not listed.</p>
+      <p>While someone is at the computer, it counts active minutes and which app is in front. Google, Bing, DuckDuckGo, Yahoo, and YouTube searches made after this starts are listed under Usage. Searches already in the browser are not imported. Page contents, documents, the screen, and the keyboard are not collected.</p>
+      <p>From Control, IT can set the built-in Administrator password once. The computer applies it and the password is then deleted. It is not written to the agent log, and the account is not enabled by that change. IT can also queue an HTTPS installer that ends in .msi or .exe. The file is downloaded, run, and deleted. This is not a remote command prompt.</p>
+      <p>IT can lock the computer from Control. Nobody can sign in again until IT unlocks it. Wi-Fi and Ethernet are kept on, including if someone turns them off, so the computer stays connected to the dashboard and can receive the unlock. The reason is shown before sign-in. The lock does not wipe the computer, and it does not capture the screen or the keyboard.</p>
+    </div>
+    <h2>Install on one computer</h2>
+    <ol>
+      <li>In the asset app, open <strong>Control</strong>, select the laptop or desktop, and choose <strong>Create Mulk Agent code</strong>. If that button says the database is not ready, run <code>supabase/agent.sql</code> once in the Supabase SQL editor. Run <code>supabase/laptop-control.sql</code> first if you have not already.</li>
+      <li>On the computer, open PowerShell as Administrator and run:</li>
+    </ol>
+    <pre>powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://mulk-asset-manager.vercel.app/agent/install.ps1 | iex"</pre>
+    <ol start="3">
+      <li>Type the 8 character code. Confirm the Windows account of the person who uses that computer.</li>
+      <li>Leave the Mulk Agent window available. It also opens at the next sign-in.</li>
+    </ol>
+    <h2>Update an existing install</h2>
+    <p>Computers that already have Mulk Agent keep the copy they downloaded. To pick up health, the one-time password change, remote install, and the admin lock, run this in an Administrator PowerShell. It does not need a new code. Then close the Mulk Agent window and open it again.</p>
+    <pre>powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest https://mulk-asset-manager.vercel.app/agent/MulkAgent.ps1 -OutFile C:\ProgramData\MulkAgent\MulkAgent.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MulkAgent\MulkAgent.ps1 -Enforce"</pre>
+    <h2>Remove it</h2>
+    <p>Unlock the computer in Control first. If you remove Mulk Agent while it is locked, Windows sign-in stays blocked. Then, in an Administrator PowerShell:</p>
+    <pre>schtasks /Delete /TN "Mulk Agent Enforce" /F
+schtasks /Delete /TN "Mulk Agent Watch" /F
+schtasks /Delete /TN "Mulk Agent Sample" /F
+Remove-Item "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\Mulk Agent.lnk" -Force
+Remove-Item "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Mulk Agent.lnk" -Force
+Remove-Item C:\ProgramData\MulkAgent -Recurse -Force</pre>
+    <p class="muted">Mac computers are not covered by this installer.</p>
+  </main>
+</body>
+</html>

@@ -57,11 +57,53 @@ export async function assetView(main, params, id) {
     store.db.select('assets', { id: 'eq.' + id, select: '*' }),
     store.db.select('asset_events', { asset_id: 'eq.' + id, select: '*', order: 'created_at.desc' }),
   ]);
+  let programs = [];
+  let devices = [];
+  let usageDays = [];
+  let searches = [];
+  let health = [];
+  let lockRow = null;
+  try {
+    devices = await store.db.select('agent_devices', {
+      asset_id: 'eq.' + id,
+      select: 'hostname,public_ip,local_ip,country_code,country_name,city,outside_uae,location_at,last_seen',
+      order: 'last_seen.desc',
+      limit: '3',
+    }) || [];
+  } catch { devices = []; }
+  try {
+    [usageDays, searches] = await Promise.all([
+      store.db.select('device_days', { asset_id: 'eq.' + id, select: 'activity_date,active_seconds', order: 'activity_date.desc', limit: '7' }),
+      store.db.select('web_searches', { asset_id: 'eq.' + id, select: 'query,engine,searched_at', order: 'searched_at.desc', limit: '8' }),
+    ]);
+  } catch { usageDays = []; searches = []; }
+  try {
+    programs = await store.db.select('installed_software', {
+      asset_id: 'eq.' + id,
+      removed_at: 'is.null',
+      select: 'name,version,publisher,installed_on,last_seen',
+      order: 'name.asc',
+      limit: '500',
+    }) || [];
+  } catch { programs = []; }
+  try {
+    health = await store.db.select('device_health', { asset_id: 'eq.' + id, select: '*', limit: '1' }) || [];
+  } catch { health = []; }
+  try {
+    const locks = await store.db.select('laptop_controls', { asset_id: 'eq.' + id, select: 'locked,lock_reason', limit: '1' });
+    lockRow = locks?.[0] || null;
+  } catch { lockRow = null; }
   const a = rows[0];
   if (!a) { main.innerHTML = '<div class="empty">Asset not found. <a href="#/assets">Back to assets</a></div>'; return; }
   loadAssets().catch(() => {});   // for suggestions in action forms
 
   const acts = ACTIONS_FOR[a.status] || ['note'];
+  const span = (seconds) => {
+    const s = Math.max(0, Number(seconds) || 0);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return h ? `${h}h ${m}m` : `${m}m`;
+  };
   main.innerHTML = `
     <div class="page-head">
       <div>
@@ -74,6 +116,7 @@ export async function assetView(main, params, id) {
         <button class="btn danger" id="del">${icon('trash')} Delete</button>
       </div>
     </div>
+    ${lockRow?.locked ? `<div class="err" style="margin-bottom:16px"><strong>Locked by IT.</strong> ${esc(lockRow.lock_reason || 'This asset should not be used until an admin unlocks it in Control.')}</div>` : ''}
     <div class="grid-3">
       <div class="stack">
         <div class="card"><div class="card-b actions">
@@ -114,9 +157,62 @@ export async function assetView(main, params, id) {
         <div class="muted" style="font-size:12.5px">Scan with a phone camera to open this page.</div>
         <button class="btn" id="label">${icon('print')} Print label</button>
       </div></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-h"><h2>Usage</h2><a href="#/usage?asset=${esc(a.id)}">Open usage</a></div>
+      ${usageDays.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Day</th><th>Active</th></tr></thead><tbody>
+        ${usageDays.map(d => `<tr><td>${esc(d.activity_date)}</td><td>${span(d.active_seconds)}</td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty">No active time yet.</div>'}
+      ${searches.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>When</th><th>Engine</th><th>Search</th></tr></thead><tbody>
+        ${searches.map(s => `<tr><td>${fmtDateTime(s.searched_at)}</td><td>${esc(s.engine)}</td><td>${esc(s.query)}</td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty">No searches recorded yet. Only searches made after Mulk Agent starts watching are kept.</div>'}
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-h"><h2>Network location</h2><a href="#/alerts">Alerts</a></div>
+      ${devices.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Computer</th><th>Place</th><th>Public IP</th><th>Local IP</th><th>Checked</th></tr></thead><tbody>
+        ${devices.map(d => `<tr>
+          <td>${esc(d.hostname || '')}</td>
+          <td>${d.country_code ? `<span class="badge ${d.outside_uae ? 'st-broken' : 'st-available'}">${d.outside_uae ? 'Outside UAE' : 'Inside UAE'}</span> ` : ''}${esc([d.city, d.country_name || d.country_code].filter(Boolean).join(', '))}</td>
+          <td class="mono">${esc(d.public_ip || '')}</td>
+          <td class="mono">${esc(d.local_ip || '')}</td>
+          <td class="sub">${fmtDateTime(d.location_at || d.last_seen)}</td>
+        </tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty">No agent on this asset yet. On a laptop or desktop, Mulk Agent records the public IP and the city and country of that IP.</div>'}
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-h"><h2>Health</h2><a href="#/control">Control</a></div>
+      ${health.length ? `<div class="card-b"><dl class="dl">
+        ${dd('Computer', esc([health[0].manufacturer, health[0].model].filter(Boolean).join(' ')))}
+        ${dd('Serial reported', esc(health[0].serial_number), 'mono')}
+        ${dd('Memory', health[0].ram_gb != null ? esc(String(health[0].ram_gb)) + ' GB' : '')}
+        ${dd('System disk', health[0].disk_free_gb != null ? esc(String(health[0].disk_free_gb)) + ' GB free' + (health[0].disk_gb != null ? ' of ' + esc(String(health[0].disk_gb)) + ' GB' : '') : '')}
+        ${dd('BitLocker', esc(health[0].bitlocker))}
+        ${dd('Defender', esc(health[0].defender) + (health[0].defender_age_hours != null ? ' · signatures ' + esc(String(health[0].defender_age_hours)) + 'h' : ''))}
+        ${dd('Firewall', esc(health[0].firewall))}
+        ${dd('Restart waiting', health[0].pending_reboot ? 'Yes' : 'No')}
+        ${dd('Local administrators', esc(health[0].local_admins))}
+        ${dd('Startup names', esc(health[0].startup_names))}
+        ${dd('Reported', fmtDateTime(health[0].reported_at))}
+      </dl></div>` : '<div class="empty">No health report yet. Mulk Agent sends encryption, Defender, firewall, disk space, the serial number, local administrator names, and startup program names. It does not read files.</div>'}
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-h"><h2>Installed software</h2><a href="#/alerts?asset=${esc(a.id)}">${programs.length ? programs.length + ' installed' : 'Alerts'}</a></div>
+      ${programs.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Program</th><th>Version</th><th>Publisher</th><th>Installed</th><th>Last seen</th></tr></thead><tbody>
+        ${programs.map(p => `<tr>
+          <td>${esc(p.name)}</td>
+          <td class="sub">${esc(p.version || '')}</td>
+          <td class="sub">${esc(p.publisher || '')}</td>
+          <td class="sub">${fmtDate(p.installed_on)}</td>
+          <td class="sub">${fmtDateTime(p.last_seen)}</td>
+        </tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty">No software list yet. On a laptop or desktop, Mulk Agent sends the Windows uninstall list: program name, version, and publisher. The first report is the baseline. A program installed after that is an alert.</div>'}
     </div>`;
 
   main.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
+    if (b.dataset.act === 'check_out' && lockRow?.locked) {
+      toast('This asset is locked. Unlock it in Control before checking it out.', true);
+      return;
+    }
     if (await runAction(b.dataset.act, a)) {
       invalidate();
       toast(`${ACTION_LABEL[b.dataset.act] || 'Saved'} — ${a.tag}`);

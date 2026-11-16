@@ -20,6 +20,30 @@ export async function dashboardView(main) {
     loadAssets(true),
     store.db.select('asset_events', { select: 'id,action,event_date,assigned_to,created_at,performed_by,notes,asset_id,assets(tag,description)', order: 'created_at.desc', limit: '12' }),
   ]);
+  let software = [];
+  let copies = [];
+  let away = [];
+  let compliance = [];
+  let devices = [];
+  let locked = [];
+  try {
+    [software, copies, away] = await Promise.all([
+      store.db.select('software_events', { select: 'id,asset_id,name,kind,happened_at', acknowledged_at: 'is.null', order: 'happened_at.desc', limit: '6' }),
+      store.db.select('copy_activity', { select: 'id,asset_id,channel,file_name,action,happened_at', acknowledged_at: 'is.null', order: 'happened_at.desc', limit: '6' }),
+      store.db.select('agent_devices', { select: 'asset_id,public_ip,city,country_name,country_code,location_at', outside_uae: 'eq.true', order: 'location_at.desc', limit: '8' }),
+    ]);
+  } catch { software = []; copies = []; away = []; }
+  try {
+    compliance = await store.db.select('compliance_alerts', { select: 'id,asset_id,kind,detail,happened_at', acknowledged_at: 'is.null', order: 'happened_at.desc', limit: '6' }) || [];
+  } catch { compliance = []; }
+  try {
+    devices = await store.db.select('agent_devices', { select: 'asset_id,hostname,last_seen', order: 'last_seen.asc', limit: '200' }) || [];
+  } catch { devices = []; }
+  try {
+    locked = await store.db.select('laptop_controls', { select: 'asset_id,lock_reason', locked: 'eq.true', limit: '8' }) || [];
+  } catch { locked = []; }
+  const quietCutoff = Date.now() - 24 * 3600 * 1000;
+  const offline = devices.filter(d => !d.last_seen || new Date(d.last_seen).getTime() < quietCutoff);
   const by = Object.fromEntries(countBy(assets, 'status'));
   const kpi = (status, label) => `
     <a class="card kpi" href="${status ? q({ status }) : '#/assets'}">
@@ -59,6 +83,80 @@ export async function dashboardView(main) {
           ${warranty.length ? `<h2 style="margin:18px 0 10px">Warranty ending in 60 days</h2><div class="bars">${warranty.slice(0, 6).map(a => `
             <a class="bar" style="grid-template-columns:1fr auto" href="#/asset/${a.id}"><span class="bar-name"><span class="tag">${esc(a.tag)}</span> <span class="muted">${esc(a.description || '')}</span></span><span class="muted">${fmtDate(a.warranty_expiry)}</span></a>`).join('')}</div>` : ''}
         </div></div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-h"><h2>Outside the UAE</h2><a href="#/alerts">${away.length ? away.length + ' now' : 'Alerts'}</a></div>
+      ${away.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>
+        ${away.map(r => {
+          const asset = assets.find(a => a.id === r.asset_id);
+          const place = [r.city, r.country_name || r.country_code].filter(Boolean).join(', ');
+          return `<tr class="clickable" data-href="#/alerts">
+            <td>${asset ? `<span class="tag">${esc(asset.tag)}</span>` : ''}<div class="sub">${esc(place)}</div></td>
+            <td class="mono">${esc(r.public_ip || '')}</td>
+            <td class="sub">${fmtDateTime(r.location_at)}</td></tr>`;
+        }).join('')}
+      </tbody></table></div>` : '<div class="empty">Every enrolled computer last seen in the UAE, or none have reported a public IP yet. This is the city and country of the public IP, not GPS.</div>'}
+    </div>
+    <div class="grid-2" style="margin-bottom:16px">
+      <div class="card">
+        <div class="card-h"><h2>New programs</h2><a href="#/alerts">${software.length ? software.length + ' open' : 'Alerts'}</a></div>
+        ${software.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>
+          ${software.map(r => {
+            const asset = assets.find(a => a.id === r.asset_id);
+            return `<tr class="clickable" data-href="#/alerts?asset=${esc(r.asset_id)}">
+              <td>${asset ? `<span class="tag">${esc(asset.tag)}</span>` : ''}<div class="sub">${esc(r.name)}</div></td>
+              <td><span class="badge ${r.kind === 'removed' ? 'st-under_repair' : 'st-checked_out'}">${r.kind === 'removed' ? 'Removed' : 'Installed'}</span></td>
+              <td class="sub">${fmtDateTime(r.happened_at)}</td></tr>`;
+          }).join('')}
+        </tbody></table></div>` : '<div class="empty">No new programs. Mulk Agent sends the uninstall list. The first scan is the baseline.</div>'}
+      </div>
+      <div class="card">
+        <div class="card-h"><h2>Data leaving</h2><a href="#/alerts">${copies.length ? copies.length + ' open' : 'Alerts'}</a></div>
+        ${copies.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>
+          ${copies.map(r => {
+            const asset = assets.find(a => a.id === r.asset_id);
+            return `<tr class="clickable" data-href="#/alerts">
+              <td>${asset ? `<span class="tag">${esc(asset.tag)}</span>` : ''}<div class="sub">${esc(r.file_name)}</div></td>
+              <td><span class="badge ${r.action === 'warned' ? 'st-under_repair' : 'st-broken'}">${esc(r.action)}</span></td>
+              <td class="sub">${fmtDateTime(r.happened_at)}</td></tr>`;
+          }).join('')}
+        </tbody></table></div>` : '<div class="empty">No open data-leaving reports. A removable drive is reported by its letter and volume name.</div>'}
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-h"><h2>Locked by IT</h2><a href="#/control">${locked.length ? locked.length + ' locked' : 'Control'}</a></div>
+      ${locked.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>
+        ${locked.map(r => {
+          const asset = assets.find(a => a.id === r.asset_id);
+          return `<tr class="clickable" data-href="#/control">
+            <td>${asset ? `<span class="tag">${esc(asset.tag)}</span>` : ''}<div class="sub">${esc(r.lock_reason || '')}</div></td>
+          </tr>`;
+        }).join('')}
+      </tbody></table></div>` : '<div class="empty">No asset is locked. In Control, Lock asset stops sign-in until you unlock it. Wi-Fi and Ethernet stay connected.</div>'}
+    </div>
+    <div class="grid-2" style="margin-bottom:16px">
+      <div class="card">
+        <div class="card-h"><h2>Health</h2><a href="#/alerts">${compliance.length ? compliance.length + ' open' : 'Alerts'}</a></div>
+        ${compliance.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>
+          ${compliance.map(r => {
+            const asset = assets.find(a => a.id === r.asset_id);
+            return `<tr class="clickable" data-href="#/alerts">
+              <td>${asset ? `<span class="tag">${esc(asset.tag)}</span>` : ''}<div class="sub">${esc(r.detail)}</div></td>
+              <td class="sub">${fmtDateTime(r.happened_at)}</td></tr>`;
+          }).join('')}
+        </tbody></table></div>` : '<div class="empty">No open health alerts. Encryption, Defender, the firewall, disk space, and a serial mismatch are checked. Files are not read.</div>'}
+      </div>
+      <div class="card">
+        <div class="card-h"><h2>Not seen for a day</h2><a href="#/alerts">${offline.length ? offline.length + ' quiet' : 'Alerts'}</a></div>
+        ${offline.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>
+          ${offline.slice(0, 8).map(d => {
+            const asset = assets.find(a => a.id === d.asset_id);
+            return `<tr class="clickable" data-href="#/asset/${esc(d.asset_id)}">
+              <td>${asset ? `<span class="tag">${esc(asset.tag)}</span>` : ''}<div class="sub">${esc(d.hostname || '')}</div></td>
+              <td class="sub">${d.last_seen ? fmtDateTime(d.last_seen) : 'Never'}</td></tr>`;
+          }).join('')}
+        </tbody></table></div>` : '<div class="empty">Every enrolled computer has checked in during the last day.</div>'}
+      </div>
     </div>
     <div class="card">
       <div class="card-h"><h2>Recent activity</h2><a href="#/activity">View all</a></div>
